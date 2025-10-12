@@ -3,17 +3,15 @@ from tkinter import messagebox, ttk
 import json
 import os
 
-# 🔐 Import hashing/checking utilities to use secure password verification
+# Import hashing/checking utilities to use secure password verification
 from User_Registration import UserRegistration, check_password
 from Order_Placement import Cart, OrderPlacement, UserProfile, RestaurantMenu, PaymentMethod
 from Payment_Processing import PaymentProcessing
 from Restaurant_Browsing import RestaurantDatabase, RestaurantBrowsing
 
-
 # ---------------------- SECURITY & IO HELPERS ----------------------
 
 USERS_FILE = "users.json"
-
 def normalize_email(email: str) -> str:
     """Normalize email to lowercase and remove extra spaces."""
     return (email or "").strip().lower()
@@ -56,10 +54,27 @@ class Application(tk.Tk):
         super().__init__()
         self.title("Mobile Food Delivery App")
         self.geometry("600x400")
-
-        # ✅ Use safe file loading for user data
+        # Force macOS to use a standard opaque window style
+        try:
+            self.tk.call("tk::unsupported::MacWindowStyle", "style", self._w, "document", "normal")
+        except tk.TclError:
+            pass  # safe to ignore on non-macOS systems
+        
+        # Without the changes below, application runs and registrations fields are blacked out
+        # which effects the visibility and requires user to manually click on UI to find out
+        # and fill the fields, this is a UX flaw which is fixed by adding the changes below
+        # Force light theme for all widgets to avoid dark-mode invisibility
+        self.configure(bg="white")
+        self.option_add("*Background", "white")
+        self.option_add("*Foreground", "black")
+        self.option_add("*Entry.Background", "white")
+        self.option_add("*Entry.Foreground", "black")
+        self.option_add("*Button.Background", "#f0f0f0")
+        self.option_add("*Button.Foreground", "black")
+        self.option_add("*Label.Background", "white")
+        self.option_add("*Label.Foreground", "black")
+        # Use safe file loading for user data
         self.user_data = load_users()
-
         # Initialize core classes
         self.registration = UserRegistration()
         self.registration.users = self.user_data  # Load existing users into registration system
@@ -134,8 +149,8 @@ class StartupFrame(tk.Frame):
 
 class RegisterFrame(tk.Frame):
     def __init__(self, master):
-        super().__init__(master)
-
+        super().__init__(master, bg="white") # here we add which bg to improve visibility in the registration fields
+        
         tk.Label(self, text="Register New User", font=("Arial", 14)).pack(pady=20)
 
         self.email_entry = self.create_entry("Email:")
@@ -144,12 +159,23 @@ class RegisterFrame(tk.Frame):
 
         tk.Button(self, text="Register", command=self.register_user).pack(pady=10)
         tk.Button(self, text="Back", command=self.go_back).pack()
+        self.after(100, self.update)
 
     def create_entry(self, label_text, show=None):
         frame = tk.Frame(self)
         frame.pack(pady=5)
         tk.Label(frame, text=label_text, width=15, anchor="e").pack(side="left")
-        entry = tk.Entry(frame, show=show)
+        entry = tk.Entry(
+            frame,
+            show=show,
+            bg="white",
+            fg="black",
+            insertbackground="black",  # makes cursor visible
+            highlightthickness=1,
+            highlightbackground="#cccccc",
+            highlightcolor="#333333",
+            width=30
+        )
         entry.pack(side="left")
         return entry
 
@@ -173,7 +199,7 @@ class RegisterFrame(tk.Frame):
 
 class LoginFrame(tk.Frame):
     def __init__(self, master):
-        super().__init__(master)
+        super().__init__(master, bg="white")
 
         tk.Label(self, text="User Login", font=("Arial", 14)).pack(pady=20)
 
@@ -182,12 +208,23 @@ class LoginFrame(tk.Frame):
 
         tk.Button(self, text="Login", command=self.login).pack(pady=10)
         tk.Button(self, text="Back", command=self.go_back).pack()
+        self.after(100, self.update)
 
     def create_entry(self, label_text, show=None):
         frame = tk.Frame(self)
         frame.pack(pady=5)
         tk.Label(frame, text=label_text, width=15, anchor="e").pack(side="left")
-        entry = tk.Entry(frame, show=show)
+        entry = tk.Entry(
+            frame,
+            show=show,
+            bg="white",
+            fg="black",
+            insertbackground="black",  # makes cursor visible
+            highlightthickness=1,
+            highlightbackground="#cccccc",
+            highlightcolor="#333333",
+            width=30
+        )
         entry.pack(side="left")
         return entry
 
@@ -218,7 +255,6 @@ class LoginFrame(tk.Frame):
 
     def go_back(self):
         self.master.show_startup_frame()
-
 
 class MainAppFrame(tk.Frame):
     def __init__(self, master, user_email):

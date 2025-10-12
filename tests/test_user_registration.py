@@ -51,17 +51,17 @@ class TestUserRegistration(unittest.TestCase):
         user2 = {"email": "Test@Example.com", "password": "AnotherPass123!"}
         self.reg.register_user(user1)
         result = self.reg.register_user(user2)
-        self.assertFalse(result)
+        self.assertFalse(result["success"])
 
     def test_register_invalid_email(self):
         user = {"email": "bademail", "password": "ValidPass123!"}
         result = self.reg.register_user(user)
-        self.assertFalse(result)
+        self.assertFalse(result["success"])
 
     def test_register_weak_password(self):
         user = {"email": "weakpass@example.com", "password": "1234567"}
         result = self.reg.register_user(user)
-        self.assertFalse(result)
-
+        self.assertFalse(result["success"])
+        
 if __name__ == "__main__":
     unittest.main()
