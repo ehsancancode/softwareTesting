@@ -73,9 +73,13 @@ class Application(tk.Tk):
         # One-time password upgrade (migrate plaintext to hashed)
         from User_Registration import hash_password, is_strong_password
         updated = False
+        """fix for one UT failure"""
+        updated = False
         for email, data in self.registration.users.items():
             pw = data.get("password", "")
-            if pw and not pw.startswith("$2") and not any(c.isdigit() for c in pw[:10]):  # crude check
+            # Detect plaintext: bcrypt hashes always start with "$2" or "$argon2"
+            if pw and not str(pw).startswith(("$2", "$argon2")):
+                # Only hash if password looks reasonably strong
                 if is_strong_password(pw):
                     self.registration.users[email]["password"] = hash_password(pw)
                     updated = True
