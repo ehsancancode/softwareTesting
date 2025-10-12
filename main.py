@@ -3,23 +3,53 @@ from tkinter import messagebox, ttk
 import json
 import os
 
-from User_Registration import UserRegistration
+# 🔐 Import hashing/checking utilities to use secure password verification
+from User_Registration import UserRegistration, check_password
 from Order_Placement import Cart, OrderPlacement, UserProfile, RestaurantMenu, PaymentMethod
 from Payment_Processing import PaymentProcessing
 from Restaurant_Browsing import RestaurantDatabase, RestaurantBrowsing
 
-# Utility functions for user data storage
+
+# ---------------------- SECURITY & IO HELPERS ----------------------
+
 USERS_FILE = "users.json"
 
-def load_users():
-    if not os.path.exists(USERS_FILE):
+def normalize_email(email: str) -> str:
+    """Normalize email to lowercase and remove extra spaces."""
+    return (email or "").strip().lower()
+
+def safe_load_json(path: str) -> dict:
+    """Load a JSON file safely, returning {} if missing or corrupted."""
+    try:
+        if not os.path.exists(path):
+            return {}
+        with open(path, "r") as f:
+            data = json.load(f)
+            return data if isinstance(data, dict) else {}
+    except json.JSONDecodeError:
         return {}
-    with open(USERS_FILE, "r") as f:
-        return json.load(f)
+
+def atomic_write_json(path: str, data: dict):
+    """Write JSON atomically to avoid corruption and set secure permissions."""
+    tmp_path = path + ".tmp"
+    with open(tmp_path, "w") as f:
+        json.dump(data, f, indent=4)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp_path, path)
+    try:
+        os.chmod(path, 0o600)  # restrict file permissions where possible
+    except Exception:
+        pass
+
+def load_users():
+    """Load users safely from JSON file."""
+    return safe_load_json(USERS_FILE)
 
 def save_users(users):
-    with open(USERS_FILE, "w") as f:
-        json.dump(users, f, indent=4)
+    """Save users safely to JSON file."""
+    atomic_write_json(USERS_FILE, users)
+
 
 class Application(tk.Tk):
     def __init__(self):
@@ -27,7 +57,7 @@ class Application(tk.Tk):
         self.title("Mobile Food Delivery App")
         self.geometry("600x400")
 
-        # Load user registration data from file
+        # ✅ Use safe file loading for user data
         self.user_data = load_users()
 
         # Initialize core classes
@@ -39,6 +69,18 @@ class Application(tk.Tk):
 
         # Initially no user logged in
         self.logged_in_email = None
+
+        # One-time password upgrade (migrate plaintext to hashed)
+        from User_Registration import hash_password, is_strong_password
+        updated = False
+        for email, data in self.registration.users.items():
+            pw = data.get("password", "")
+            if pw and not pw.startswith("$2") and not any(c.isdigit() for c in pw[:10]):  # crude check
+                if is_strong_password(pw):
+                    self.registration.users[email]["password"] = hash_password(pw)
+                    updated = True
+        if updated:
+            save_users(self.registration.users)
 
         # Create initial frame
         self.current_frame = None
@@ -108,13 +150,13 @@ class RegisterFrame(tk.Frame):
         return entry
 
     def register_user(self):
-        email = self.email_entry.get()
+        # Normalize email before registering
+        email = normalize_email(self.email_entry.get())
         password = self.pass_entry.get()
         confirm_password = self.conf_pass_entry.get()
 
         result = self.master.registration.register(email, password, confirm_password)
         if result["success"]:
-            # Save the updated users to file
             save_users(self.master.registration.users)
             messagebox.showinfo("Success", "Registration successful! Please log in.")
             self.master.show_login_frame()
@@ -146,15 +188,29 @@ class LoginFrame(tk.Frame):
         return entry
 
     def login(self):
-        email = self.email_entry.get()
+        # Secure login using hashed passwords & normalized emails
+        email = normalize_email(self.email_entry.get())
         password = self.pass_entry.get()
-        # Validate login
-        # For simplicity, just check if user exists and password matches
         users = self.master.registration.users
-        if email in users and users[email]["password"] == password:
-            self.master.login_user(email)
-        else:
-            messagebox.showerror("Error", "Invalid email or password")
+
+        if email in users:
+            stored = users[email]
+            stored_pw = stored.get("password", "")
+            ok = False
+            try:
+                ok = check_password(password, stored_pw)
+            except Exception:
+                ok = False
+
+            # Allow temporary fallback for legacy plaintext users
+            if not ok and stored_pw == password:
+                ok = True
+
+            if ok:
+                self.master.login_user(email)
+                return
+
+        messagebox.showerror("Error", "Invalid email or password")
 
     def go_back(self):
         self.master.show_startup_frame()
@@ -212,9 +268,6 @@ class MainAppFrame(tk.Frame):
             self.results_tree.insert("", "end", values=(r["cuisine"], r["location"], r["rating"]))
 
     def add_item_to_cart(self):
-        # For simplicity, let's assume user always adds "Pizza"
-        # A more sophisticated approach: Let user select from menu items.
-        # We will show a small popup to choose items.
         menu_popup = AddItemPopup(self, self.restaurant_menu, self.cart)
         self.wait_window(menu_popup)
 
@@ -223,13 +276,10 @@ class MainAppFrame(tk.Frame):
         self.wait_window(cart_view)
 
     def checkout(self):
-        # Validate order and proceed if valid
         validation = self.order_placement.validate_order()
         if not validation["success"]:
             messagebox.showerror("Error", validation["message"])
             return
-
-        # Show Checkout Popup
         checkout_popup = CheckoutPopup(self, self.order_placement)
         self.wait_window(checkout_popup)
 
@@ -242,7 +292,6 @@ class AddItemPopup(tk.Toplevel):
         self.cart = cart
 
         tk.Label(self, text="Select an item to add to cart:").pack(pady=10)
-
         self.item_var = tk.StringVar()
         self.item_var.set(self.menu.available_items[0] if self.menu.available_items else "")
         tk.OptionMenu(self, self.item_var, *self.menu.available_items).pack(pady=5)
@@ -251,13 +300,20 @@ class AddItemPopup(tk.Toplevel):
         self.qty_entry = tk.Entry(self)
         self.qty_entry.insert(0, "1")
         self.qty_entry.pack(pady=5)
-
         tk.Button(self, text="Add to Cart", command=self.add_to_cart).pack(pady=10)
 
     def add_to_cart(self):
-        item = self.item_var.get()
-        qty = int(self.qty_entry.get())
-        price = 10.0  # Static price for simplicity
+        # ✅ Prevent crash or negative/invalid quantities
+        try:
+            item = self.item_var.get().strip()
+            qty = int(self.qty_entry.get().strip())
+            if qty <= 0:
+                raise ValueError
+        except ValueError:
+            messagebox.showerror("Invalid Quantity", "Please enter a positive whole number.")
+            return
+
+        price = 10.0
         msg = self.cart.add_item(item, price, qty)
         messagebox.showinfo("Cart", msg)
         self.destroy()
@@ -284,8 +340,6 @@ class CheckoutPopup(tk.Toplevel):
 
         order_data = order_placement.proceed_to_checkout()
         tk.Label(self, text="Review your order:", font=("Arial", 12)).pack(pady=10)
-
-        # Show items
         for item in order_data["items"]:
             tk.Label(self, text=f"{item['name']} x{item['quantity']} = ${item['subtotal']:.2f}").pack()
 
@@ -294,10 +348,8 @@ class CheckoutPopup(tk.Toplevel):
         tk.Label(self, text=f"Tax: ${total['tax']:.2f}").pack()
         tk.Label(self, text=f"Delivery Fee: ${total['delivery_fee']:.2f}").pack()
         tk.Label(self, text=f"Total: ${total['total']:.2f}").pack()
-
         tk.Label(self, text=f"Delivery Address: {order_data['delivery_address']}").pack(pady=5)
 
-        # Payment method selection
         tk.Label(self, text="Payment Method:").pack(pady=5)
         self.payment_method = tk.StringVar()
         self.payment_method.set("credit_card")
@@ -308,26 +360,43 @@ class CheckoutPopup(tk.Toplevel):
         self.card_entry = tk.Entry(self)
         self.card_entry.insert(0, "1234567812345678")
         self.card_entry.pack(pady=5)
-
         tk.Button(self, text="Confirm Order", command=self.confirm_order).pack(pady=10)
 
     def confirm_order(self):
-        # Process order confirmation with the given payment method
-        payment_method_obj = PaymentMethod()  # Mock payment method handling in the old code
-        # Actually, we have PaymentProcessing class. Let's just rely on PaymentMethod for simplicity here.
-        # If you wanted to use PaymentProcessing, you could do so by integrating it as well.
-        # For now, we'll simulate PaymentMethod.process_payment by checking if total > 0.
-        # In a full scenario, integrate PaymentProcessing similarly.
+        # Use PaymentProcessing for secure payment validation
+        total_amount = self.order_placement.cart.calculate_total()["total"]
+        processor = PaymentProcessing()
+        method = self.payment_method.get()
 
-        # Confirm the order
-        result = self.order_placement.confirm_order(payment_method_obj)
+        if method == "credit_card":
+            payment_details = {
+                "card_number": self.card_entry.get().strip(),
+                "expiry_date": "12/25",
+                "cvv": "123",
+            }
+        else:
+            payment_details = {"paypal_token": "demo"}
+
+        result_msg = processor.process_payment(
+            order={"total_amount": total_amount},
+            payment_method=method,
+            payment_details=payment_details
+        )
+
+        if not result_msg.startswith("Payment successful"):
+            messagebox.showerror("Payment Error", result_msg)
+            return
+
+        result = self.order_placement.confirm_order(PaymentMethod())
         if result["success"]:
-            messagebox.showinfo("Order Confirmed", f"Order ID: {result['order_id']}\nEstimated Delivery: {result['estimated_delivery']}")
+            messagebox.showinfo(
+                "Order Confirmed",
+                f"Order ID: {result['order_id']}\nEstimated Delivery: {result['estimated_delivery']}"
+            )
             self.destroy()
         else:
             messagebox.showerror("Error", result["message"])
-
-
+            
 if __name__ == "__main__":
     app = Application()
     app.mainloop()
